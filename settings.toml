@@ -1,5 +1,5 @@
 [paths]
-initial_state = "optimized_state.init"
+initial_state = "latest_accepted_state.init"
 optimized_state = "optimized_state.init"
 latest_accepted_state = "latest_accepted_state.init"
 output_directory = "voderberg_optimisation_data"
@@ -48,11 +48,19 @@ weight = 1.0
 # of magnitude below the thickness term.
 [[objective.terms]]
 name = "equal_spacing"
-weight = 0.002
+weight = 0.0002
 
 [[objective.terms]]
 name = "bending"
-weight = 0.002
+weight = 0.0002
+
+# Very weak max-min corner regularization. The angle used at each vertex is
+# min(interior_angle, 360 degrees - interior_angle), so both outward and inward
+# needle-like spikes are detected. A low-temperature smooth minimum directs the
+# gradient primarily toward the single worst corner.
+[[objective.terms]]
+name = "worst_corner_angle"
+weight = 0.0005
 
 [solver]
 name = "feasible_continuation"

@@ -18,6 +18,7 @@ from .objectives import (
     ContactLengthTerm,
     EqualSpacingTerm,
     MeanAngleTerm,
+    WorstCornerAngleTerm,
     ShellThicknessTerm,
     ObjectiveTerm,
     WeightedTerm,
@@ -46,6 +47,7 @@ TERM_FACTORIES: dict[str, TermFactory] = {
     "mean_angle": lambda settings: MeanAngleTerm(),
     "equal_spacing": lambda settings: EqualSpacingTerm(),
     "bending": lambda settings: BendingTerm(),
+    "worst_corner_angle": lambda settings: WorstCornerAngleTerm(),
     "legacy_barrier": _legacy_barrier,
 }
 

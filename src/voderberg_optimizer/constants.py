@@ -1,0 +1,11 @@
+"""Technical numerical constants that are not user-facing settings."""
+
+EPSILON = 1.0e-12
+MAX_EXPONENT = 500.0
+DEFAULT_LARGE_PENALTY = 1.0e6
+NORTH = (0.0, 1.0)
+SOUTH = (0.0, -1.0)
+
+BARRIER_SLOPE_FACTOR = 24.0
+INFEASIBILITY_LINEAR_WEIGHT = 1000.0
+CROSSING_MARGIN_CAP = 100.0

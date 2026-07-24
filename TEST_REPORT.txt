@@ -1,0 +1,29 @@
+Voderberg optimizer interactive strict-feasibility edition
+Validation date: 2026-07-24
+
+Commands executed:
+  python -m compileall -q src tests
+  pytest -q
+  PYTHONPATH=src python -m voderberg_optimizer.cli --help
+
+Result:
+  24 tests passed
+  Python source and tests compiled successfully
+  CLI parser smoke test passed
+
+Covered behavior includes:
+  - reference-equivalent SRN2 parameterization
+  - dynamic state/refinement encoding
+  - exact proper/touch/overlap segment classification
+  - self- and cross-contour validation
+  - intentional-contact transverse-crossing rejection
+  - arbitrary additional contours
+  - collision-safe backtracking from a bow-tie proposal
+  - active separators and continuation solve
+  - equal-spacing and bending regularization
+  - TOML objective-term configuration
+
+Environment limitation:
+  Pygame is not installed in the artifact-generation container, so the live
+  window was code-reviewed and compiled but not opened here. It is installed by
+  requirements.txt on the target Windows environment.

@@ -1,0 +1,8 @@
+setuptools>=68
+wheel>=0.41
+numpy>=1.24
+scipy>=1.10
+autograd>=1.6
+pygame>=2.5
+pytest>=7.4
+tomli>=2.0; python_version < "3.11"

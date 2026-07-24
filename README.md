@@ -1,22 +1,22 @@
-# Voderberg SRN2 optimizer - interactive strict-feasibility edition
+# Voderberg SRN2 optimizer - shell-thickness edition
 
-This archive contains the complete refactored project, including the exact SRN2
-parameterization, free-point refinement, a responsive interactive viewer, SVG/STL
-export, and a topology-conscious continuation solver based on SciPy SLSQP.
+This project reconstructs the exact three-piece SRN2 assembly from the compact
+free state `(theta, X, P, Q, Y, B)` and optimizes the minimum thickness between
+the named inner and outer shell boundaries.
 
-The solver is intentionally local: it continuously deforms a known valid SRN2
-solution instead of searching directly through arbitrary, frequently tangled
-polygons.
+The solver remains a local, topology-conscious SciPy SLSQP process. It deforms a
+known valid state continuously, rejects forbidden crossings, and never commits
+an invalid endpoint.
 
-## 1. Required input
+## Required input
 
-The historical initialization file is not included because it was not supplied:
+Copy the historical initialization file beside `settings.toml`:
 
 ```text
 voderberg_srn2_angles45_contact_optimV4.init
 ```
 
-Copy it beside `settings.toml`. The default historical layout is:
+The default state layout is:
 
 ```text
 X = 7 points
@@ -25,15 +25,15 @@ Q = 3 points
 Y = 3 points
 ```
 
-## 2. Windows installation
+## Windows installation
 
-From the extracted project directory, run:
+From the project directory:
 
 ```bat
 install_windows.bat
 ```
 
-Equivalent PowerShell commands are:
+Equivalent PowerShell commands:
 
 ```powershell
 py -3 -m venv .venv
@@ -42,15 +42,11 @@ py -3 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e . --no-build-isolation
 ```
 
-The dependencies are ordinary `pip` packages: NumPy, SciPy, Autograd, Pygame,
-Pytest, and `tomli` for Python 3.10. No Docker image, external solver executable,
-or compiler toolchain is required.
+No Docker image, external executable solver, or compiler toolchain is required.
 
-Python 3.10 or later, 64-bit, is recommended on Windows.
+## Launch optimization
 
-## 3. Run the optimizer
-
-### Optimization with the interactive viewer
+With the interactive viewer:
 
 ```bat
 run_optimize.bat
@@ -62,161 +58,125 @@ Equivalent command:
 .\.venv\Scripts\python.exe -m voderberg_optimizer.cli optimize --settings settings.toml
 ```
 
-### Optimization without a window
+Without the viewer:
 
 ```bat
 run_optimize_no_display.bat
 ```
 
-Equivalent command:
-
-```powershell
-.\.venv\Scripts\python.exe -m voderberg_optimizer.cli optimize --settings settings.toml --no-display
-```
-
-### Display only
-
-Initial state:
+Display only:
 
 ```bat
 display_initial.bat
-```
-
-Optimized state:
-
-```bat
 display_final.bat
 ```
 
-An explicit state file:
-
-```powershell
-.\.venv\Scripts\python.exe -m voderberg_optimizer.cli display --settings settings.toml --state path\to\state.init
-```
-
-### Export the optimized state
-
-```bat
-export_final.bat
-```
-
-### Run the tests
+Run tests:
 
 ```bat
 run_tests.bat
 ```
 
-## 4. Interactive viewer controls
+## Active objective
 
-The Pygame event loop stays in the main thread. The numerical solver runs in a
-worker thread, so the window remains responsive while SLSQP evaluates a local
-subproblem.
-
-Controls:
+The geometric target is:
 
 ```text
-Mouse wheel       zoom around the cursor
-+ / -             zoom around the window center
-Left/middle/right drag
-                  pan the view
-F, R, or Home     fit all displayed contours
-C                 show/hide clearance circles
-H                 show/hide the control reminder
-Q or Escape       close the viewer
-Window close      close the viewer
+maximize minimum distance(inner shell boundary, outer shell boundary)
 ```
 
-Closing the viewer does not discard a long computation. Optimization continues
-headlessly and still writes the final state and exports.
-
-The current zoom and pan are preserved when a new accepted solution is drawn.
-The viewer no longer refits the geometry after every iteration.
-
-## 5. Collision and step-acceptance policy
-
-The recommended backend is:
+The active configuration is:
 
 ```toml
-[solver]
-name = "feasible_continuation"
-method = "SLSQP"
+[objective]
+shell_thickness_temperature = 0.002
+
+[[objective.terms]]
+name = "shell_thickness"
+weight = 1.0
+
+[[objective.terms]]
+name = "equal_spacing"
+weight = 0.0002
+
+[[objective.terms]]
+name = "bending"
+weight = 0.00002
 ```
 
-Each local cycle performs the following operations:
+The historical contact-length and mean-angle objectives are not selected. The historical 45-degree angle term is neither configured nor active.
 
-1. Build local separating constraints for nearby forbidden segment pairs.
-2. Ask SLSQP for a candidate inside a bounded trust region.
-3. Test the candidate with explicit 2D segment-intersection predicates.
-4. Reject proper crossings, tangencies, and collinear overlap for every
-   forbidden pair.
-5. Check minimum edge length and the coordinate bound.
-6. Adaptively validate intermediate states between the last accepted state and
-   the candidate.
-7. If the full candidate is invalid, repeatedly reduce the step fraction.
-8. Accept only a feasible backtracked prefix that also improves the objective.
-9. Rebuild the active constraints from that accepted geometry.
+The solver uses a smooth nearest-distance estimate to obtain a useful gradient
+when the active closest segment pair changes. The viewer, console output,
+autosaves, and final state metadata also contain the exact segment-to-segment
+minimum as `exact_shell_thickness`.
 
-Therefore, an intersecting endpoint is never committed as the new solver state.
-The final saved state is validated once more defensively before being returned.
+## Elastic regularization
 
-### Self-collision
+The two weak regularizers prevent free control points from drifting along nearly
+flat directions:
 
-All pairs of non-adjacent edges of every contour are protected. Adjacent edges
-are excluded because they must share a vertex.
+- `equal_spacing`: favors roughly uniform consecutive edge lengths;
+- `bending`: suppresses unnecessary second-difference curvature and zigzags.
 
-### Collision between displayed contours
+Their weights are intentionally tiny compared with the thickness term. The
+minimum generated-edge length remains a hard solver constraint.
 
-Cross-contour protection is enabled by default:
+## Three-piece collision validation
+
+The solver now validates all three complete pieces:
+
+```text
+reference tile
+left surrounding copy
+right half-turn copy
+```
+
+Exact interfaces and the two copy-to-copy seams present in the initial state are
+registered as intentional contacts. All other self- and cross-contour segment
+pairs remain protected.
+
+Each proposed move is subjected to:
+
+1. local SLSQP separator constraints;
+2. exact endpoint intersection classification;
+3. minimum-edge and coordinate checks;
+4. conservative adaptive path validation;
+5. geometric backtracking if the full step is invalid;
+6. objective-improvement filtering.
+
+## Continuation versus objective optimization
+
+The small `target_clearance` in `settings.toml` is only a technical collision
+safety margin. It is not the shell objective.
+
+After clearance continuation finishes, the solver performs additional fixed-
+clearance optimization stages:
 
 ```toml
-enforce_cross_contour_clearance = true
+objective_refinement_stages = 16
 ```
 
-Pairs already touching in the initial exact assembly are recorded as intentional
-contacts. Such a pair may remain tangent or collinear, but it is still rejected
-if it becomes a transverse crossing. All initially separated cross-contour pairs
-must remain separated.
+This avoids stopping simply because the safety-clearance schedule has completed.
 
-### Path validation
+## Viewer controls
 
-Endpoint intersection testing is exact up to the configured floating-point
-tolerance. Intermediate-path checking is deliberately conservative: it combines
-adaptive subdivision with a displacement/clearance certificate. If the path
-cannot be certified within the configured budget, the move is rejected rather
-than assumed safe.
-
-Important controls are:
-
-```toml
-path_sample_spacing = 0.001
-maximum_path_samples = 256
-path_max_subdivision_depth = 14
-maximum_backtracking_steps = 18
-backtracking_factor = 0.5
+```text
+Mouse wheel       zoom around cursor
++ / -             zoom around center
+Mouse drag        pan
+F, R, Home        fit geometry
+O                 show/hide outer boundary
+H                 show/hide help
+Q or Escape       close viewer
 ```
 
-Reducing `path_sample_spacing` makes path checking stricter and slower.
+The three pieces are filled with different solid colors. Point circles are not
+displayed. Closing the window does not stop a running headless optimization.
 
-## 6. Continuation and plateau handling
+## Additional free points
 
-The required forbidden-segment clearance is raised progressively:
-
-```toml
-initial_clearance = 0.001
-target_clearance = 0.02
-clearance_increment = 0.001
-```
-
-A failed continuation stage reduces both its increment and the trust radius.
-Small random escape proposals are attempted only after stagnation, and they pass
-through the same collision, edge-length, coordinate, and path validation as an
-ordinary solver proposal.
-
-No random perturbation is added to every gradient step.
-
-## 7. Additional free points and mesh regularization
-
-Points can be inserted into selected control-chain segments:
+Insert free points in control-chain segments with:
 
 ```toml
 [refinement]
@@ -224,139 +184,77 @@ p_segments = [0]
 q_segments = [0]
 ```
 
-Repeating an index inserts several evenly spaced initial points:
+Repeating an index inserts several initially evenly spaced points. Their copied
+images remain exact consequences of the SRN2 parameterization.
 
-```toml
-p_segments = [0, 0, 0]
-```
+## Progressive saves and final outputs
 
-The inserted coordinates become independent variables, while all their copied
-images remain exactly dependent through `SRN2Parameterization`.
-
-Two weak objective terms remove underdetermined drift:
-
-- relative equal-spacing energy;
-- normalized bending energy.
-
-The minimum edge length remains a hard solver constraint.
-
-## 8. Replaceable objective
-
-The solver does not contain any target-specific code. Objectives are selected in
-`settings.toml` as a weighted list:
-
-```toml
-[objective]
-
-[[objective.terms]]
-name = "contact_length"
-weight = 1.0
-
-[[objective.terms]]
-name = "equal_spacing"
-weight = 0.002
-
-[[objective.terms]]
-name = "bending"
-weight = 0.0002
-```
-
-Built-in names are registered in:
+Every accepted optimizer state is saved when `logging.autosave_iterations = true`:
 
 ```text
-src/voderberg_optimizer/objective_factory.py
+voderberg_optimisation_data\YYYYMMDD_HHMMSS_iterNNNNN.init
 ```
 
-To add the future minimum shell-thickness target:
-
-1. construct the missing third/global contour in the parameterization;
-2. expose it through `TileAssembly.additional_contours`;
-3. implement a new `ObjectiveTerm` that receives `(state, assembly)`;
-4. register its name in `TERM_FACTORIES`;
-5. select it in `settings.toml`.
-
-The solver, viewer, state encoding, continuation logic, and callback system do
-not need to change. See `docs/custom_objective.md`.
-
-## 9. Output files
-
-Default outputs are:
+Each `.init` file contains the complete free-variable vector at 17-digit
+round-trip precision, dynamic chain sizes, objective values, exact shell
+thickness, clearance stage, and solver metadata.  The most recently accepted
+state is also overwritten at a stable path:
 
 ```text
-optimized_state.init
-last_contour.svg
-last_contour.stl
-voderberg_optimisation_data\...
+latest_accepted_state.init
 ```
 
-Every accepted iteration can be autosaved as a resumable `.init` file.
-
-## 10. Recommended conservative first run
-
-For initial testing on the historical state:
-
-```toml
-[solver]
-clearance_increment = 0.00025
-trust_radius = 0.005
-maximum_trust_radius = 0.015
-separator_activation_distance = 0.12
-path_sample_spacing = 0.0005
-maximum_path_samples = 512
-```
-
-For a geometry/load/export check without optimization:
-
-```toml
-[solver]
-name = "noop"
-```
-
-## 11. Project structure
+After a normal completion, the final state and exports are:
 
 ```text
-src/voderberg_optimizer/
-  acquisition.py
-  app.py
-  backend.py
-  cli.py
-  collision.py
-  config.py
-  constraints.py
-  exporters.py
-  geometry.py
-  objective_factory.py
-  objectives.py
-  parameterization.py
-  persistence.py
-  problem.py
-  refinement.py
-  regularization.py
-  state.py
-  validation.py
-  visualization.py
-  solvers/
-    base.py
-    feasible_continuation.py
-    noop.py
-    scipy_solver.py
+optimized_state.init             final free variables and metadata
+three_piece_assembly.svg         centered colored aggregate of all three pieces
+last_contour.stl                 extruded central piece, retained for compatibility
+solution_definition.py           standalone executable mathematical definition
+solution_definition.json         machine-readable numerical snapshot
 ```
 
-## 12. Validation status
+The standalone Python report uses only the Python 3 standard library.  It
+embeds `theta`, `X`, `P`, `Q`, `Y`, and `B` with 17 significant digits and
+contains the explicit rotations, translations, central symmetry, reversals,
+and concatenations that reconstruct every point in contour order. Running it
+prints the three contours and shell topology as JSON:
 
-The archive contains tests for:
+```powershell
+py -3 solution_definition.py > reconstructed_solution.json
+```
 
-- equivalence with the original SRN2 construction;
-- dynamic state encoding and point refinement;
-- proper crossing, touching, and collinear-overlap classification;
-- self-contour and cross-contour collision validation;
-- protection of initially intentional contacts against transverse crossing;
-- additional/future contours;
-- collision-safe backtracking from a bow-tie proposal;
-- local separators;
-- regularization;
-- objective configuration from TOML;
-- a complete constrained continuation solve on a synthetic problem.
+The companion JSON file contains the same free variables, all evaluated ordered
+contours, poles, primed poles, seams, and inner/outer shell boundaries.
 
-The historical `.init` file was not available in this environment, so solver
-weights and continuation scales still require calibration on the real tile.
+Regenerate all final exports without running the optimizer:
+
+```bat
+export_final.bat
+```
+
+The final CLI summary prints both initial and final exact shell thicknesses and
+the paths of these outputs.
+
+## Relevant modules
+
+```text
+parameterization.py    exact three-piece and shell construction
+topology.py            named seams, poles, and shell boundaries
+shell_metrics.py       smooth and exact shell thickness
+objectives.py          target and regularization terms
+collision.py           exact crossing and distance validation
+solvers/feasible_continuation.py
+                       continuation, safe backtracking, objective refinement
+visualization.py       responsive three-piece display
+```
+
+## Validation status
+
+The project test suite covers the original SRN2 construction, shell topology,
+independent P/Q refinement, exact and smooth shell metrics, Autograd direction,
+collision predicates, safe backtracking, objective configuration, and
+post-clearance objective refinement.
+
+The historical `.init` file is not included, so final numerical calibration on
+the real tile must be performed on your machine.

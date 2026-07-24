@@ -16,9 +16,12 @@ except ModuleNotFoundError:  # Python 3.10 fallback.
 class PathSettings:
     initial_state: Path
     optimized_state: Path
+    latest_accepted_state: Path
     output_directory: Path
     svg_output: Path
     stl_output: Path
+    solution_script_output: Path
+    solution_json_output: Path
     acquisition_image: Path
 
 
@@ -64,16 +67,16 @@ class ObjectiveTermSettings:
 
 
 _DEFAULT_OBJECTIVE_TERMS = (
-    ObjectiveTermSettings("contact_length", 1.0),
-    ObjectiveTermSettings("mean_angle", 0.01),
-    ObjectiveTermSettings("equal_spacing", 0.002),
-    ObjectiveTermSettings("bending", 0.0002),
+    ObjectiveTermSettings("shell_thickness", 1.0),
+    ObjectiveTermSettings("equal_spacing", 0.0002),
+    ObjectiveTermSettings("bending", 0.00002),
 )
 
 
 @dataclass(frozen=True)
 class ObjectiveSettings:
     terms: tuple[ObjectiveTermSettings, ...] = _DEFAULT_OBJECTIVE_TERMS
+    shell_thickness_temperature: float = 0.002
     use_legacy_barrier: bool = False
     barrier_weight: float = 1.0
     barrier_amplitude: float = 100.0
@@ -92,6 +95,7 @@ class SolverSettings:
     minimum_clearance_increment: float = 0.00005
     maximum_stages: int = 80
     maximum_local_passes: int = 8
+    objective_refinement_stages: int = 12
     trust_radius: float = 0.02
     minimum_trust_radius: float = 0.0001
     maximum_trust_radius: float = 0.05
@@ -121,17 +125,19 @@ class DisplaySettings:
     margin_pixels: int = 50
     point_radius_pixels: int = 3
     frames_per_second: int = 30
-    show_clearance_circles: bool = True
+    show_clearance_circles: bool = False
     zoom_factor: float = 1.15
     minimum_zoom: float = 0.02
     maximum_zoom: float = 200.0
     show_help: bool = True
+    show_outer_boundary: bool = True
 
 
 @dataclass(frozen=True)
 class ExportSettings:
     write_svg: bool = True
     write_stl: bool = True
+    write_solution_report: bool = True
     stl_thickness: float = 0.1
 
 
@@ -164,12 +170,7 @@ def _parse_objective(raw: dict[str, Any]) -> ObjectiveSettings:
     term_rows = raw.get("terms")
     if term_rows is None:
         # Compatibility with the previous revision's flat weight fields.
-        terms = (
-            ObjectiveTermSettings("contact_length", float(raw.get("contact_weight", 1.0))),
-            ObjectiveTermSettings("mean_angle", float(raw.get("mean_angle_weight", 0.01))),
-            ObjectiveTermSettings("equal_spacing", float(raw.get("equal_spacing_weight", 0.002))),
-            ObjectiveTermSettings("bending", float(raw.get("bending_weight", 0.0002))),
-        )
+        terms = _DEFAULT_OBJECTIVE_TERMS
     else:
         if not isinstance(term_rows, list):
             raise TypeError("objective.terms must be an array of TOML tables.")
@@ -181,6 +182,7 @@ def _parse_objective(raw: dict[str, Any]) -> ObjectiveSettings:
             raise ValueError("At least one [[objective.terms]] entry is required.")
     return ObjectiveSettings(
         terms=terms,
+        shell_thickness_temperature=float(raw.get("shell_thickness_temperature", 0.002)),
         use_legacy_barrier=bool(raw.get("use_legacy_barrier", False)),
         barrier_weight=float(raw.get("barrier_weight", 1.0)),
         barrier_amplitude=float(raw.get("barrier_amplitude", 100.0)),
@@ -197,9 +199,12 @@ def load_settings(path: str | Path) -> AppSettings:
     paths = PathSettings(
         initial_state=_resolve(base, path_values.get("initial_state", "state.init")),
         optimized_state=_resolve(base, path_values.get("optimized_state", "optimized_state.init")),
+        latest_accepted_state=_resolve(base, path_values.get("latest_accepted_state", "latest_accepted_state.init")),
         output_directory=_resolve(base, path_values.get("output_directory", "output")),
-        svg_output=_resolve(base, path_values.get("svg_output", "last_contour.svg")),
+        svg_output=_resolve(base, path_values.get("svg_output", "three_piece_assembly.svg")),
         stl_output=_resolve(base, path_values.get("stl_output", "last_contour.stl")),
+        solution_script_output=_resolve(base, path_values.get("solution_script_output", "solution_definition.py")),
+        solution_json_output=_resolve(base, path_values.get("solution_json_output", "solution_definition.json")),
         acquisition_image=_resolve(base, path_values.get("acquisition_image", "VoderbergSRN2Patron.png")),
     )
 

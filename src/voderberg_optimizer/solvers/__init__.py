@@ -31,6 +31,7 @@ def create_solver(settings: SolverSettings, *, coordinate_bound: float = 2.0) ->
             minimum_clearance_increment=settings.minimum_clearance_increment,
             maximum_stages=settings.maximum_stages,
             maximum_local_passes=settings.maximum_local_passes,
+            objective_refinement_stages=settings.objective_refinement_stages,
             trust_radius=settings.trust_radius,
             minimum_trust_radius=settings.minimum_trust_radius,
             maximum_trust_radius=settings.maximum_trust_radius,

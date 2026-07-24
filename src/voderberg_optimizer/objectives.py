@@ -9,6 +9,7 @@ from .backend import np
 from .constants import NORTH, SOUTH
 from .constraints import ConstraintSettings, assembly_margin, soft_barrier
 from .geometry import mean_interior_angle, rotate_point
+from .shell_metrics import exact_shell_thickness, smooth_shell_thickness
 from .parameterization import TileAssembly
 from .regularization import state_bending_energy, state_equal_spacing_energy
 from .state import SRN2State
@@ -47,6 +48,24 @@ class MeanAngleTerm:
     def value(self, state: SRN2State, assembly: TileAssembly) -> Any:
         del state
         return -mean_interior_angle(assembly.main_contour, closed=True)
+
+
+
+
+@dataclass(frozen=True)
+class ShellThicknessTerm:
+    """Minimize the negative smooth inner-to-outer shell thickness."""
+
+    temperature: float
+    name: str = "negative_shell_thickness"
+
+    def value(self, state: SRN2State, assembly: TileAssembly) -> Any:
+        del state
+        return -smooth_shell_thickness(assembly, self.temperature)
+
+    def diagnostics(self, state: SRN2State, assembly: TileAssembly) -> dict[str, float]:
+        del state
+        return {"exact_shell_thickness": exact_shell_thickness(assembly)}
 
 
 @dataclass(frozen=True)
@@ -95,5 +114,8 @@ class CompositeObjective:
             raw = weighted.term.value(state, assembly)
             result[weighted.term.name] = float(raw)
             result[f"weighted_{weighted.term.name}"] = float(weighted.weight * raw)
+            diagnostics = getattr(weighted.term, "diagnostics", None)
+            if diagnostics is not None:
+                result.update(diagnostics(state, assembly))
         result["total"] = sum(value for key, value in result.items() if key.startswith("weighted_"))
         return result

@@ -11,6 +11,7 @@ def test_objective_terms_are_loaded_from_toml(tmp_path: Path) -> None:
 initial_state = "state.init"
 
 [objective]
+shell_thickness_temperature = 0.003
 
 [[objective.terms]]
 name = "equal_spacing"
@@ -23,6 +24,7 @@ weight = 0.25
         encoding="utf-8",
     )
     settings = load_settings(settings_file)
+    assert settings.objective.shell_thickness_temperature == 0.003
     assert [(term.name, term.weight) for term in settings.objective.terms] == [
         ("equal_spacing", 3.5),
         ("bending", 0.25),

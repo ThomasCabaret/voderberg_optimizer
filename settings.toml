@@ -1,9 +1,12 @@
 [paths]
-initial_state = "voderberg_srn2_angles45_contact_optimV4.init"
+initial_state = "optimized_state.init"
 optimized_state = "optimized_state.init"
+latest_accepted_state = "latest_accepted_state.init"
 output_directory = "voderberg_optimisation_data"
-svg_output = "last_contour.svg"
+svg_output = "three_piece_assembly.svg"
 stl_output = "last_contour.stl"
+solution_script_output = "solution_definition.py"
+solution_json_output = "solution_definition.json"
 acquisition_image = "VoderbergSRN2Patron.png"
 
 [state_layout]
@@ -13,8 +16,6 @@ q_points = 3
 y_points = 3
 
 [initialization]
-# "file" loads the legacy indexed-vector format.
-# "image" starts the legacy Pygame acquisition workflow.
 mode = "file"
 
 [refinement]
@@ -25,54 +26,52 @@ q_segments = []
 y_segments = []
 
 [geometry]
-# Legacy barrier settings, retained only for optional objective terms.
-minimum_distance = 0.01
-minimum_angle_degrees = 45.0
+# Technical coordinate bound used by the feasibility solver. The historical
+# angle barrier is not configured or used by the active optimization.
 coordinate_bound = 2.0
-include_segment_crossing_margin = false
 
 [objective]
-# The solver is independent of this list. Add, remove, or reweight terms here.
-# A future shell-thickness target only needs a new ObjectiveTerm registered in
-# src/voderberg_optimizer/objective_factory.py.
+# Temperature of the smooth minimum used during optimization. The exact
+# inner-to-outer polyline distance is still computed for display and logging.
+shell_thickness_temperature = 0.002
 use_legacy_barrier = false
 barrier_weight = 1.0
 barrier_amplitude = 100.0
 
+# Primary objective: maximize minimum shell thickness. The program minimizes,
+# so this term returns the negative smooth thickness.
 [[objective.terms]]
-name = "contact_length"
+name = "shell_thickness"
 weight = 1.0
 
-[[objective.terms]]
-name = "mean_angle"
-weight = 0.01
-
+# Weak elastic mesh regularization. These weights should remain several orders
+# of magnitude below the thickness term.
 [[objective.terms]]
 name = "equal_spacing"
 weight = 0.002
 
 [[objective.terms]]
 name = "bending"
-weight = 0.0002
+weight = 0.002
 
 [solver]
-# Recommended: "feasible_continuation".
-# Other choices: "noop", "legacy_scipy".
 name = "feasible_continuation"
 method = "SLSQP"
 maximum_iterations = 250
 function_tolerance = 1.0e-9
 finite_difference_step = 1.0e-7
 
-# Continuation on the required non-adjacent segment clearance.
-initial_clearance = 0.001
-target_clearance = 0.02
-clearance_increment = 0.001
-minimum_clearance_increment = 0.00005
+# Technical collision clearance, not an optimization target. Keep it small;
+# shell thickness is optimized separately by the objective above.
+initial_clearance = 0.0005
+target_clearance = 0.002
+clearance_increment = 0.00025
+minimum_clearance_increment = 0.000025
 
-# Local sequential solve parameters.
-maximum_stages = 80
+maximum_stages = 40
 maximum_local_passes = 8
+# After clearance continuation, continue minimizing the actual objective.
+objective_refinement_stages = 16
 trust_radius = 0.02
 minimum_trust_radius = 0.0001
 maximum_trust_radius = 0.05
@@ -80,9 +79,6 @@ theta_trust_radius = 0.01
 separator_activation_distance = 0.08
 minimum_edge_length = 0.001
 
-# Strict acceptance guard. Endpoints are tested by exact 2D intersection
-# predicates. The path is adaptively subdivided and rejected conservatively
-# when it cannot be certified within the configured budget.
 path_sample_spacing = 0.001
 maximum_path_samples = 256
 path_max_subdivision_depth = 14
@@ -91,13 +87,9 @@ maximum_backtracking_steps = 18
 backtracking_factor = 0.5
 minimum_step_fraction = 1.0e-6
 
-# Cross-contour protection is enabled. Segment pairs already touching in the
-# initial exact assembly are automatically excluded as intentional contacts.
 enforce_cross_contour_clearance = true
 initial_contact_exclusion_distance = 0.0001
 
-# Controlled plateau escape. Perturbations are accepted only after the same
-# exact endpoint and adaptive path validation as ordinary solver steps.
 stagnation_passes = 3
 escape_attempts = 6
 escape_radius = 0.002
@@ -110,15 +102,17 @@ screen_height = 800
 margin_pixels = 50
 point_radius_pixels = 3
 frames_per_second = 30
-show_clearance_circles = true
+show_clearance_circles = false
 zoom_factor = 1.15
 minimum_zoom = 0.02
 maximum_zoom = 200.0
 show_help = true
+show_outer_boundary = true
 
 [export]
 write_svg = true
 write_stl = true
+write_solution_report = true
 stl_thickness = 0.1
 
 [logging]

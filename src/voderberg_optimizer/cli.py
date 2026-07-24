@@ -42,9 +42,18 @@ def main() -> None:
         summary = optimize(settings, display=not arguments.no_display)
         print(f"Initial objective: {summary.initial_objective:.12g}")
         print(f"Final objective:   {summary.final_objective:.12g}")
+        if summary.initial_shell_thickness is not None:
+            print(f"Initial thickness: {summary.initial_shell_thickness:.12g}")
+        if summary.final_shell_thickness is not None:
+            print(f"Final thickness:   {summary.final_shell_thickness:.12g}")
         print(f"Success:           {summary.success}")
         print(f"Message:           {summary.message}")
         print(f"Final state:       {settings.paths.optimized_state}")
+        print(f"Latest accepted:   {settings.paths.latest_accepted_state}")
+        print(f"Assembly SVG:      {settings.paths.svg_output}")
+        if settings.export.write_solution_report:
+            print(f"Solution script:   {settings.paths.solution_script_output}")
+            print(f"Solution JSON:     {settings.paths.solution_json_output}")
         return
 
     if arguments.command == "display":
@@ -59,8 +68,11 @@ def main() -> None:
             final=not arguments.initial and arguments.state is None,
         )
         export_state(settings, state)
-        print(f"SVG: {settings.paths.svg_output}")
-        print(f"STL: {settings.paths.stl_output}")
+        print(f"Assembly SVG:    {settings.paths.svg_output}")
+        print(f"Central STL:     {settings.paths.stl_output}")
+        if settings.export.write_solution_report:
+            print(f"Solution script: {settings.paths.solution_script_output}")
+            print(f"Solution JSON:   {settings.paths.solution_json_output}")
         return
 
     raise RuntimeError(f"Unsupported command: {arguments.command}")

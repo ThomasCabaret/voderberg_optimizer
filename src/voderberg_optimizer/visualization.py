@@ -2,11 +2,21 @@
 
 from __future__ import annotations
 
-import colorsys
 from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
+
+
+BACKGROUND_COLOR = (30, 30, 30)
+PIECE_FILL_COLORS = (
+    (74, 126, 187),   # reference tile
+    (214, 139, 72),   # left surrounding copy
+    (91, 164, 112),   # right surrounding copy
+)
+PIECE_OUTLINE_COLOR = (18, 18, 18)
+OUTER_BOUNDARY_COLOR = (245, 245, 245)
+HELP_TEXT_COLOR = (235, 235, 235)
 
 
 @dataclass(frozen=True)
@@ -21,18 +31,22 @@ class ViewerSettings:
     minimum_zoom: float = 0.02
     maximum_zoom: float = 200.0
     show_help: bool = True
+    show_outer_boundary: bool = True
 
 
 class PygameViewer:
-    """Interactive read-only viewer.
+    """Interactive read-only viewer for the reconstructed three-piece assembly.
 
     Controls:
       - mouse wheel or +/-: zoom around cursor / window center
       - left, middle, or right drag: pan
-      - F or R: fit all contours
-      - C: toggle clearance circles
+      - F or R: fit all displayed pieces
+      - O: toggle the reconstructed external shell boundary
       - H: toggle help
       - Escape, Q, or window close: close only the viewer
+
+    The legacy point and clearance-circle settings remain in ``ViewerSettings``
+    for configuration compatibility, but vertices are deliberately not drawn.
     """
 
     def __init__(self, settings: ViewerSettings) -> None:
@@ -47,7 +61,7 @@ class PygameViewer:
         self._view_initialized = False
         self._view_dirty = True
         self._show_help = settings.show_help
-        self._show_clearance_circles = settings.show_clearance_circles
+        self._show_outer_boundary = settings.show_outer_boundary
         self._scale = 1.0
         self._fit_scale = 1.0
         self._offset_x = settings.screen_size[0] / 2.0
@@ -57,11 +71,6 @@ class PygameViewer:
         self.screen = pygame.display.set_mode(settings.screen_size, pygame.RESIZABLE)
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont("Consolas", 16)
-
-    @staticmethod
-    def _hue(index: int, count: int) -> tuple[int, int, int]:
-        red, green, blue = colorsys.hsv_to_rgb(index / max(count, 1), 1.0, 1.0)
-        return int(255 * red), int(255 * green), int(255 * blue)
 
     def _fit_view(self, contours: tuple[Any, ...]) -> None:
         all_points = np.vstack([np.asarray(contour, dtype=float) for contour in contours])
@@ -140,8 +149,8 @@ class PygameViewer:
                     self._zoom_at(self._window_center(), self.settings.zoom_factor)
                 elif event.key in (pygame.K_MINUS, pygame.K_KP_MINUS):
                     self._zoom_at(self._window_center(), 1.0 / self.settings.zoom_factor)
-                elif event.key == pygame.K_c:
-                    self._show_clearance_circles = not self._show_clearance_circles
+                elif event.key == pygame.K_o:
+                    self._show_outer_boundary = not self._show_outer_boundary
                     self._view_dirty = True
                 elif event.key == pygame.K_h:
                     self._show_help = not self._show_help
@@ -152,7 +161,13 @@ class PygameViewer:
         width, height = self.screen.get_size()
         return width // 2, height // 2
 
-    def draw(self, contours: tuple[Any, ...], caption: str = "Voderberg SRN2", force: bool = False) -> None:
+    def draw(
+        self,
+        contours: tuple[Any, ...],
+        caption: str = "Voderberg SRN2",
+        force: bool = False,
+        outer_boundary: Any | None = None,
+    ) -> None:
         if self.closed:
             return
         if not self._view_initialized:
@@ -161,32 +176,34 @@ class PygameViewer:
             return
 
         pygame = self.pygame
-        self.screen.fill((30, 30, 30))
-        for contour in contours:
+        self.screen.fill(BACKGROUND_COLOR)
+        for index, contour in enumerate(contours):
             screen_points = [self._screen_point(point) for point in contour]
             if len(screen_points) >= 3:
-                pygame.draw.polygon(self.screen, (255, 255, 255), screen_points, width=1)
+                fill = PIECE_FILL_COLORS[index % len(PIECE_FILL_COLORS)]
+                pygame.draw.polygon(self.screen, fill, screen_points, width=0)
+                pygame.draw.polygon(self.screen, PIECE_OUTLINE_COLOR, screen_points, width=2)
             elif len(screen_points) >= 2:
-                pygame.draw.lines(self.screen, (255, 255, 255), False, screen_points, width=1)
-            for index, screen_point in enumerate(screen_points):
-                pygame.draw.circle(
+                pygame.draw.lines(self.screen, PIECE_OUTLINE_COLOR, False, screen_points, width=2)
+
+        if self._show_outer_boundary and outer_boundary is not None:
+            boundary_points = [self._screen_point(point) for point in outer_boundary]
+            if len(boundary_points) >= 3:
+                pygame.draw.polygon(
                     self.screen,
-                    self._hue(index, len(screen_points)),
-                    screen_point,
-                    self.settings.point_radius_pixels,
+                    OUTER_BOUNDARY_COLOR,
+                    boundary_points,
+                    width=3,
                 )
-                if self._show_clearance_circles:
-                    radius = max(1, int(self.settings.minimum_distance * self._scale))
-                    pygame.draw.circle(self.screen, (255, 255, 0), screen_point, radius, width=1)
 
         if self._show_help:
             lines = (
                 "Wheel / +/-: zoom   Drag: pan   F/R: fit",
-                "C: clearance circles   H: help   Q/Esc: close viewer",
+                "O: outer boundary   H: help   Q/Esc: close viewer",
             )
             y = 8
             for line in lines:
-                surface = self.font.render(line, True, (230, 230, 230))
+                surface = self.font.render(line, True, HELP_TEXT_COLOR)
                 self.screen.blit(surface, (8, y))
                 y += surface.get_height() + 2
 
@@ -194,18 +211,34 @@ class PygameViewer:
         pygame.display.flip()
         self._view_dirty = False
 
-    def frame(self, contours: tuple[Any, ...], caption: str, new_geometry: bool = False) -> None:
+    def frame(
+        self,
+        contours: tuple[Any, ...],
+        caption: str,
+        new_geometry: bool = False,
+        outer_boundary: Any | None = None,
+    ) -> None:
         if self.closed:
             return
         redraw_requested = self.process_events(contours)
         if new_geometry:
             self._view_dirty = True
-        self.draw(contours, caption=caption, force=redraw_requested or new_geometry)
+        self.draw(
+            contours,
+            caption=caption,
+            force=redraw_requested or new_geometry,
+            outer_boundary=outer_boundary,
+        )
         self.clock.tick(self.settings.frames_per_second)
 
-    def wait_until_closed(self, contours: tuple[Any, ...], caption: str) -> None:
+    def wait_until_closed(
+        self,
+        contours: tuple[Any, ...],
+        caption: str,
+        outer_boundary: Any | None = None,
+    ) -> None:
         while not self.closed:
-            self.frame(contours, caption)
+            self.frame(contours, caption, outer_boundary=outer_boundary)
 
     def wait_until_closed_or_keypress(self) -> None:
         """Compatibility helper; use wait_until_closed for interactive viewing."""

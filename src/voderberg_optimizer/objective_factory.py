@@ -18,6 +18,7 @@ from .objectives import (
     ContactLengthTerm,
     EqualSpacingTerm,
     MeanAngleTerm,
+    ShellThicknessTerm,
     ObjectiveTerm,
     WeightedTerm,
 )
@@ -38,6 +39,9 @@ def _legacy_barrier(settings: AppSettings) -> ObjectiveTerm:
 
 
 TERM_FACTORIES: dict[str, TermFactory] = {
+    "shell_thickness": lambda settings: ShellThicknessTerm(
+        settings.objective.shell_thickness_temperature
+    ),
     "contact_length": lambda settings: ContactLengthTerm(),
     "mean_angle": lambda settings: MeanAngleTerm(),
     "equal_spacing": lambda settings: EqualSpacingTerm(),

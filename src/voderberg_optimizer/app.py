@@ -11,7 +11,7 @@ from typing import Any
 
 from .acquisition import acquire_normalized_keypoints, state_from_legacy_keypoints
 from .config import AppSettings
-from .exporters import save_extruded_stl, save_svg
+from .exporters import save_extruded_stl, save_piece_assembly_svg
 from .objective_factory import build_objective
 from .parameterization import SRN2Parameterization
 from .persistence import autosave_state, load_state, load_state_auto, save_state
@@ -19,6 +19,8 @@ from .problem import OptimizationProblem, ProblemEvaluation
 from .refinement import refine_state
 from .solvers import create_solver
 from .solvers.base import SolverIteration, SolverResult
+from .shell_metrics import exact_shell_thickness
+from .solution_report import save_solution_json, save_standalone_solution_script
 from .state import SRN2State, StateLayout
 from .visualization import PygameViewer, ViewerSettings
 
@@ -27,6 +29,8 @@ from .visualization import PygameViewer, ViewerSettings
 class RunSummary:
     initial_objective: float
     final_objective: float
+    initial_shell_thickness: float | None
+    final_shell_thickness: float | None
     success: bool
     message: str
     final_state: SRN2State
@@ -105,16 +109,61 @@ def _create_viewer(settings: AppSettings, enabled: bool | None = None) -> Pygame
             minimum_zoom=display.minimum_zoom,
             maximum_zoom=display.maximum_zoom,
             show_help=display.show_help,
+            show_outer_boundary=display.show_outer_boundary,
         )
     )
 
 
-def export_state(settings: AppSettings, state: SRN2State) -> None:
-    assembly = SRN2Parameterization().build(state.with_normalized_theta())
+def export_state(
+    settings: AppSettings,
+    state: SRN2State,
+    *,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    """Export visual and standalone descriptions of one numerical state.
+
+    SVG and reports are deliberately peripheral to the optimizer: they rebuild
+    the exact assembly from the supplied free variables and never mutate the
+    state or participate in acceptance decisions.
+    """
+
+    normalized_state = state.with_normalized_theta()
+    assembly = SRN2Parameterization().build(normalized_state)
+    report_metadata = {
+        "exact_shell_thickness": exact_shell_thickness(assembly),
+        **(metadata or {}),
+    }
     if settings.export.write_svg:
-        save_svg(assembly.main_contour, settings.paths.svg_output)
+        outer_boundary = assembly.shell.outer_boundary if assembly.shell is not None else None
+        save_piece_assembly_svg(
+            assembly.piece_contours,
+            settings.paths.svg_output,
+            outer_boundary=outer_boundary,
+        )
     if settings.export.write_stl:
-        save_extruded_stl(assembly.main_contour, settings.paths.stl_output, settings.export.stl_thickness)
+        # STL remains the extruded central tile, as in previous revisions.
+        save_extruded_stl(
+            assembly.main_contour,
+            settings.paths.stl_output,
+            settings.export.stl_thickness,
+        )
+    if settings.export.write_solution_report:
+        save_standalone_solution_script(
+            normalized_state,
+            settings.paths.solution_script_output,
+            metadata=report_metadata,
+        )
+        save_solution_json(
+            normalized_state,
+            assembly,
+            settings.paths.solution_json_output,
+            metadata=report_metadata,
+        )
+
+
+def _shell_thickness_caption(evaluation: ProblemEvaluation) -> str:
+    thickness = evaluation.breakdown.get("exact_shell_thickness")
+    return "" if thickness is None else f" thickness={thickness:.6f}"
 
 
 def display_state(settings: AppSettings, state: SRN2State) -> None:
@@ -122,9 +171,23 @@ def display_state(settings: AppSettings, state: SRN2State) -> None:
     assert viewer is not None
     problem = build_problem(settings, state.layout)
     evaluation = problem.evaluate(state.to_vector())
-    caption = f"Objective: {evaluation.objective:.6f}"
-    viewer.draw(evaluation.assembly.contours, caption=caption, force=True)
-    viewer.wait_until_closed(evaluation.assembly.contours, caption)
+    caption = (
+        f"Objective: {evaluation.objective:.6f}"
+        f"{_shell_thickness_caption(evaluation)}"
+    )
+    assembly = evaluation.assembly
+    outer_boundary = assembly.shell.outer_boundary if assembly.shell is not None else None
+    viewer.draw(
+        assembly.piece_contours,
+        caption=caption,
+        force=True,
+        outer_boundary=outer_boundary,
+    )
+    viewer.wait_until_closed(
+        assembly.piece_contours,
+        caption,
+        outer_boundary=outer_boundary,
+    )
 
 
 def _put_latest(target: queue.Queue[_ViewerUpdate], update: _ViewerUpdate) -> None:
@@ -154,11 +217,22 @@ def optimize(settings: AppSettings, display: bool | None = None) -> RunSummary:
         if settings.logging.print_contour_points:
             print(evaluation.assembly.main_contour)
         if settings.logging.autosave_iterations:
+            iteration_metadata = {
+                "objective": evaluation.objective,
+                **evaluation.breakdown,
+                **iteration.metadata,
+            }
             autosave_state(
                 settings.paths.output_directory,
                 evaluation.state,
                 iteration.index,
-                metadata={"objective": evaluation.objective, **iteration.metadata},
+                metadata=iteration_metadata,
+            )
+            # Stable path for external inspection while a long run is active.
+            save_state(
+                settings.paths.latest_accepted_state,
+                evaluation.state,
+                metadata={"accepted_iteration": iteration.index, **iteration_metadata},
             )
         if viewer is not None:
             _put_latest(
@@ -166,14 +240,14 @@ def optimize(settings: AppSettings, display: bool | None = None) -> RunSummary:
                 _ViewerUpdate(
                     evaluation=evaluation,
                     caption=(
-                        f"Accepted {iteration.index}: {evaluation.objective:.6f} "
-                        f"{iteration.message}"
+                        f"Accepted {iteration.index}: {evaluation.objective:.6f}"
+                        f"{_shell_thickness_caption(evaluation)} {iteration.message}"
                     ),
                 ),
             )
         print(
-            f"Iteration {iteration.index:04d} objective={evaluation.objective:.12g} "
-            f"{iteration.message}"
+            f"Iteration {iteration.index:04d} objective={evaluation.objective:.12g}"
+            f"{_shell_thickness_caption(evaluation)} {iteration.message}"
         )
 
     if viewer is None:
@@ -190,8 +264,20 @@ def optimize(settings: AppSettings, display: bool | None = None) -> RunSummary:
         worker = threading.Thread(target=solver_worker, name="voderberg-solver", daemon=True)
         worker.start()
         current_evaluation = initial_evaluation
-        current_caption = f"Searching... initial objective {initial_evaluation.objective:.6f}"
-        viewer.draw(current_evaluation.assembly.contours, caption=current_caption, force=True)
+        current_caption = (
+            f"Searching... initial objective {initial_evaluation.objective:.6f}"
+            f"{_shell_thickness_caption(initial_evaluation)}"
+        )
+        current_assembly = current_evaluation.assembly
+        current_outer_boundary = (
+            current_assembly.shell.outer_boundary if current_assembly.shell is not None else None
+        )
+        viewer.draw(
+            current_assembly.piece_contours,
+            caption=current_caption,
+            force=True,
+            outer_boundary=current_outer_boundary,
+        )
 
         while worker.is_alive():
             new_geometry = False
@@ -204,10 +290,17 @@ def optimize(settings: AppSettings, display: bool | None = None) -> RunSummary:
                 current_caption = update.caption
                 new_geometry = True
             if not viewer.closed:
+                current_assembly = current_evaluation.assembly
+                current_outer_boundary = (
+                    current_assembly.shell.outer_boundary
+                    if current_assembly.shell is not None
+                    else None
+                )
                 viewer.frame(
-                    current_evaluation.assembly.contours,
+                    current_assembly.piece_contours,
                     caption=current_caption,
                     new_geometry=new_geometry,
+                    outer_boundary=current_outer_boundary,
                 )
             else:
                 # Closing the viewer does not discard a long optimization run.
@@ -224,18 +317,48 @@ def optimize(settings: AppSettings, display: bool | None = None) -> RunSummary:
     save_state(
         settings.paths.optimized_state,
         final_evaluation.state,
-        metadata={"objective": final_evaluation.objective, **result.metadata},
+        metadata={
+            "objective": final_evaluation.objective,
+            **final_evaluation.breakdown,
+            **result.metadata,
+        },
     )
-    export_state(settings, final_evaluation.state)
+    export_state(
+        settings,
+        final_evaluation.state,
+        metadata={
+            "objective": final_evaluation.objective,
+            **final_evaluation.breakdown,
+            **result.metadata,
+        },
+    )
 
     if viewer is not None and not viewer.closed:
-        final_caption = f"Finished: objective {final_evaluation.objective:.6f} - {result.message}"
-        viewer.draw(final_evaluation.assembly.contours, caption=final_caption, force=True)
-        viewer.wait_until_closed(final_evaluation.assembly.contours, final_caption)
+        final_caption = (
+            f"Finished: objective {final_evaluation.objective:.6f}"
+            f"{_shell_thickness_caption(final_evaluation)} - {result.message}"
+        )
+        final_assembly = final_evaluation.assembly
+        final_outer_boundary = (
+            final_assembly.shell.outer_boundary if final_assembly.shell is not None else None
+        )
+        viewer.draw(
+            final_assembly.piece_contours,
+            caption=final_caption,
+            force=True,
+            outer_boundary=final_outer_boundary,
+        )
+        viewer.wait_until_closed(
+            final_assembly.piece_contours,
+            final_caption,
+            outer_boundary=final_outer_boundary,
+        )
 
     return RunSummary(
         initial_objective=initial_evaluation.objective,
         final_objective=final_evaluation.objective,
+        initial_shell_thickness=initial_evaluation.breakdown.get("exact_shell_thickness"),
+        final_shell_thickness=final_evaluation.breakdown.get("exact_shell_thickness"),
         success=result.success,
         message=result.message,
         final_state=final_evaluation.state,

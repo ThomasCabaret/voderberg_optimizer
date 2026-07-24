@@ -21,5 +21,7 @@ def test_both_contours_have_dependency_predicted_size() -> None:
     expected = 6 * len(state.p) + 6 * len(state.q) + 3 * len(state.y) + 4 * len(state.x) + 7
     assert len(assembly.main_contour) == expected
     assert len(assembly.left_contour) == expected
+    assert assembly.right_contour is not None
+    assert len(assembly.right_contour) == expected
     np.testing.assert_allclose(assembly.main_contour[0], [0.0, 1.0])
     np.testing.assert_allclose(assembly.left_contour[0], [0.0, 1.0])

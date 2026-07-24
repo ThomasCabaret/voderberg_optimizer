@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "voderberg-optimizer"
-version = "0.3.0"
-description = "Interactive SRN2 Voderberg optimizer with strict collision-safe continuation"
+version = "0.5.0"
+description = "Interactive SRN2 Voderberg optimizer with reconstructed three-piece shell topology"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

@@ -38,10 +38,18 @@ The state layout is recomputed after refinement, so no vector slice is hardcoded
 - `problem.py`: solver-neutral scalar function and automatic gradient.
 - `solvers/`: interchangeable numerical backends.
 
-## Future additional contours
+## Three complete pieces and shell boundaries
 
-`TileAssembly` stores the currently reconstructed main and left contours and an
-optional `additional_contours` tuple. Display, collision enumeration, and the
-objective interface consume the generic `assembly.contours` property. A future
-third/right contour can therefore be exposed by the parameterization without
-changing those subsystems.
+`SRN2Parameterization` now reconstructs the complete right copy as the central
+symmetry of the current reference contour. `assembly.piece_contours` therefore
+contains the reference, left, and right pieces for display.
+
+The two surrounding-piece seams and the external shell boundary are reconstructed
+analytically from the dynamic `P` and `Q` chain lengths and exposed through
+`assembly.shell`. No tolerance-based polygon union is required. See
+`docs/shell_topology.md`.
+
+For deliberate solver compatibility, `assembly.contours` still returns the two
+historical optimization contours plus any explicitly supplied
+`additional_contours`. This revision prepares geometry without changing the
+existing objective or collision problem.

@@ -9,6 +9,82 @@ from typing import Any
 import numpy as np
 
 
+ASSEMBLY_FILL_COLORS = (
+    "#4A7EBB",  # central reference tile
+    "#D68B48",  # left surrounding copy
+    "#5BA470",  # right surrounding copy
+)
+ASSEMBLY_OUTLINE_COLOR = "#121212"
+OUTER_BOUNDARY_COLOR = "#202020"
+
+
+def _svg_number(value: float) -> str:
+    return format(float(value), ".12g")
+
+
+def save_piece_assembly_svg(
+    contours: Any,
+    path: str | Path,
+    *,
+    outer_boundary: Any | None = None,
+    padding: float = 0.1,
+) -> None:
+    """Save the complete three-piece aggregate as centered filled polygons.
+
+    The relative world coordinates are preserved.  A translation by the
+    aggregate bounding-box center is applied only inside the SVG so that the
+    assembled geometry is centered in the page/viewBox.
+    """
+
+    contour_arrays = tuple(np.asarray(contour, dtype=float) for contour in contours)
+    if not contour_arrays or any(len(contour) < 3 for contour in contour_arrays):
+        raise ValueError("Every SVG piece contour must contain at least three points.")
+
+    all_points = np.vstack(contour_arrays)
+    minimum = np.min(all_points, axis=0)
+    maximum = np.max(all_points, axis=0)
+    center = (minimum + maximum) / 2.0
+    size = np.maximum(maximum - minimum, 1.0e-12)
+    width = float(size[0] + 2.0 * padding)
+    height = float(size[1] + 2.0 * padding)
+    view_box = f"{-width / 2.0:.12g} {-height / 2.0:.12g} {width:.12g} {height:.12g}"
+
+    lines = [
+        '<svg xmlns="http://www.w3.org/2000/svg"',
+        f'     viewBox="{view_box}" preserveAspectRatio="xMidYMid meet">',
+        (
+            f'  <rect x="{_svg_number(-width / 2.0)}" y="{_svg_number(-height / 2.0)}" '
+            f'width="{_svg_number(width)}" height="{_svg_number(height)}" fill="white"/>'
+        ),
+        '  <g stroke-linejoin="round" stroke-linecap="round">',
+    ]
+    for index, contour in enumerate(contour_arrays):
+        shifted = contour - center
+        point_text = " ".join(
+            f"{_svg_number(point[0])},{_svg_number(-point[1])}" for point in shifted
+        )
+        fill = ASSEMBLY_FILL_COLORS[index % len(ASSEMBLY_FILL_COLORS)]
+        lines.append(
+            f'    <polygon id="piece-{index}" points="{point_text}" '
+            f'fill="{fill}" stroke="{ASSEMBLY_OUTLINE_COLOR}" stroke-width="0.006"/>'
+        )
+
+    if outer_boundary is not None:
+        boundary = np.asarray(outer_boundary, dtype=float) - center
+        boundary_text = " ".join(
+            f"{_svg_number(point[0])},{_svg_number(-point[1])}" for point in boundary
+        )
+        lines.append(
+            f'    <polygon id="outer-shell-boundary" points="{boundary_text}" '
+            f'fill="none" stroke="{OUTER_BOUNDARY_COLOR}" stroke-width="0.012"/>'
+        )
+
+    lines.extend(("  </g>", "</svg>", ""))
+    output = Path(path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text("\n".join(lines), encoding="utf-8")
+
+
 def save_svg(contour: Any, path: str | Path, padding: float = 0.1) -> None:
     points = np.asarray(contour, dtype=float)
     minimum_x, maximum_x = np.min(points[:, 0]), np.max(points[:, 0])

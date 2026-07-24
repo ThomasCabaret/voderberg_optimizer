@@ -33,6 +33,7 @@ class FeasibleContinuationSolver:
     minimum_clearance_increment: float = 0.00005
     maximum_stages: int = 80
     maximum_local_passes: int = 8
+    objective_refinement_stages: int = 12
     trust_radius: float = 0.02
     minimum_trust_radius: float = 0.0001
     maximum_trust_radius: float = 0.05
@@ -467,6 +468,103 @@ class FeasibleContinuationSolver:
                     break
                 next_target = min(self.target_clearance, achieved_clearance + increment)
 
+        # Once the technical clearance continuation is complete (or can no
+        # longer advance), keep optimizing the actual objective at fixed
+        # clearance.  Earlier revisions stopped immediately at the clearance
+        # target, which could leave the shell-thickness objective far from a
+        # local optimum.
+        refinement_stages_run = 0
+        refinement_clearance = min(achieved_clearance, self.target_clearance)
+        for refinement_stage in range(self.objective_refinement_stages):
+            stage_start_objective = current_objective
+            meaningful_improvement = False
+            stagnation = 0
+
+            for local_pass in range(self.maximum_local_passes):
+                result, separator_count = self._local_minimize(
+                    problem,
+                    current,
+                    refinement_clearance,
+                    trust_radius,
+                    excluded_cross_pairs,
+                )
+                proposed = np.asarray(result.x, dtype=float)
+                candidate, step_fraction, path_message = self._backtracked_candidate(
+                    problem,
+                    current,
+                    proposed,
+                    refinement_clearance,
+                    excluded_cross_pairs,
+                    require_improvement=True,
+                    current_objective=current_objective,
+                )
+
+                if candidate is not None:
+                    candidate_objective = float(problem.value(candidate))
+                    improvement = current_objective - candidate_objective
+                    displacement = float(np.linalg.norm(candidate - current))
+                    current = candidate
+                    current_objective = candidate_objective
+                    best_objective = min(best_objective, current_objective)
+                    trust_radius = min(self.maximum_trust_radius, trust_radius * 1.1)
+                    iteration_index += 1
+                    if improvement > self.function_tolerance:
+                        meaningful_improvement = True
+                        stagnation = 0
+                    else:
+                        stagnation += 1
+                    if callback is not None:
+                        callback(
+                            SolverIteration(
+                                index=iteration_index,
+                                vector=current.copy(),
+                                objective=current_objective,
+                                message=(
+                                    f"objective-refinement={refinement_stage + 1}, "
+                                    f"pass={local_pass + 1}, separators={separator_count}, "
+                                    f"step_fraction={step_fraction:.6g}, "
+                                    f"displacement={displacement:.6g}"
+                                ),
+                                metadata={
+                                    "clearance": refinement_clearance,
+                                    "trust_radius": trust_radius,
+                                    "step_fraction": step_fraction,
+                                    "objective_refinement_stage": float(refinement_stage + 1),
+                                },
+                            )
+                        )
+                else:
+                    trust_radius *= 0.5
+                    stagnation += 1
+                    messages.append(
+                        f"Objective refinement {refinement_stage + 1}, pass "
+                        f"{local_pass + 1} rejected: {path_message}"
+                    )
+
+                if stagnation >= self.stagnation_passes:
+                    escaped = self._escape_candidate(
+                        problem,
+                        current,
+                        refinement_clearance,
+                        excluded_cross_pairs,
+                        random,
+                        current_objective,
+                    )
+                    if escaped is not None:
+                        current = escaped
+                        current_objective = float(problem.value(current))
+                        stagnation = 0
+                    else:
+                        break
+                if trust_radius < self.minimum_trust_radius:
+                    break
+
+            refinement_stages_run += 1
+            if not meaningful_improvement:
+                # No useful descent remained at this clearance.
+                if abs(stage_start_objective - current_objective) <= self.function_tolerance:
+                    break
+
         final_report = self._validate_state(problem, current, 0.0, excluded_cross_pairs)
         if not final_report.feasible:
             # Defensive invariant: never return a topology-invalid state.
@@ -492,5 +590,6 @@ class FeasibleContinuationSolver:
                 "target_clearance": self.target_clearance,
                 "best_objective_seen": best_objective,
                 "excluded_initial_cross_contacts": float(len(excluded_cross_pairs)),
+                "objective_refinement_stages": float(refinement_stages_run),
             },
         )
